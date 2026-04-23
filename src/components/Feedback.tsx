@@ -520,6 +520,9 @@ async function submitFeedback(data: FeedbackData, signal?: AbortSignal): Promise
   feedbackId?: string;
   isZdrOrg?: boolean;
 }> {
+  void data
+  void signal
+  return { success: false }
   if (isEssentialTrafficOnly()) {
     return {
       success: false

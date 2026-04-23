@@ -378,31 +378,7 @@ export async function getURLMarkdownContent(
       upgradedUrl = parsedUrl.toString()
     }
 
-    const hostname = parsedUrl.hostname
-
-    // Check if the user has opted to skip the blocklist check
-    // This is for enterprise customers with restrictive security policies
-    // that prevent outbound connections to claude.ai
-    const settings = getSettings_DEPRECATED()
-    if (!settings.skipWebFetchPreflight) {
-      const checkResult = await checkDomainBlocklist(hostname)
-      switch (checkResult.status) {
-        case 'allowed':
-          // Continue with the fetch
-          break
-        case 'blocked':
-          throw new DomainBlockedError(hostname)
-        case 'check_failed':
-          throw new DomainCheckFailedError(hostname)
-      }
-    }
-
-    if (process.env.USER_TYPE === 'ant') {
-      logEvent('tengu_web_fetch_host', {
-        hostname:
-          hostname as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
-      })
-    }
+    void parsedUrl.hostname
   } catch (e) {
     if (
       e instanceof DomainBlockedError ||

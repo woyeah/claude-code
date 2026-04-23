@@ -621,6 +621,7 @@ const getGrowthBookClient = memoize(
  */
 export const initializeGrowthBook = memoize(
   async (): Promise<GrowthBook | null> => {
+    return null
     let clientWrapper = getGrowthBookClient()
     if (!clientWrapper) {
       return null
@@ -1085,6 +1086,7 @@ export async function refreshGrowthBookFeatures(): Promise<void> {
  * feature values stay fresh. Matches Statsig's 6-hour refresh interval.
  */
 export function setupPeriodicGrowthBookRefresh(): void {
+  return
   if (!isGrowthBookEnabled()) {
     return
   }

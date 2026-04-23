@@ -164,35 +164,10 @@ export function logError(error: unknown): void {
     process.exit(1)
   }
   try {
-    // Check if error reporting should be disabled
-    if (
-      // Cloud providers (Bedrock/Vertex/Foundry) always disable features
-      isEnvTruthy(process.env.CLAUDE_CODE_USE_BEDROCK) ||
-      isEnvTruthy(process.env.CLAUDE_CODE_USE_VERTEX) ||
-      isEnvTruthy(process.env.CLAUDE_CODE_USE_FOUNDRY) ||
-      process.env.DISABLE_ERROR_REPORTING ||
-      isEssentialTrafficOnly()
-    ) {
-      return
-    }
-
-    const errorStr = err.stack || err.message
-
-    const errorInfo = {
-      error: errorStr,
+    addToInMemoryErrorLog({
+      error: err.stack || err.message,
       timestamp: new Date().toISOString(),
-    }
-
-    // Always add to in-memory log (no dependencies needed)
-    addToInMemoryErrorLog(errorInfo)
-
-    // If sink not attached, queue the event
-    if (errorLogSink === null) {
-      errorQueue.push({ type: 'error', error: err })
-      return
-    }
-
-    errorLogSink.logError(err)
+    })
   } catch {
     // pass
   }

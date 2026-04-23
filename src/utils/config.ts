@@ -1755,14 +1755,7 @@ export function getAutoUpdaterDisabledReason(): AutoUpdaterDisabledReason | null
 }
 
 export function getOrCreateUserID(): string {
-  const config = getGlobalConfig()
-  if (config.userID) {
-    return config.userID
-  }
-
-  const userID = randomBytes(32).toString('hex')
-  saveGlobalConfig(current => ({ ...current, userID }))
-  return userID
+  return 'local'
 }
 
 export function recordFirstStartTime(): void {
