@@ -21,6 +21,7 @@ Rich architecture documentation already exists at the repo root — prefer readi
 - `SYSTEM_PROMPT_STRUCTURE.md` — how the main system prompt is composed from modular sections in `constants/prompts.ts` and assembled by `utils/systemPrompt.ts` (`buildEffectiveSystemPrompt`).
 - `INTENT_RECOGNITION.md` and `AGENT_FLOW_EXAMPLES.md` — how user input is routed and how agents are delegated to.
 - `AGENTS.md` — contributor-style conventions specific to this snapshot.
+- `ROADMAP.md` — in-flight and planned二次开发 work on this snapshot (telemetry disable, lang-system OTel integration, doc follow-ups). Check here before starting new changes to avoid stepping on ongoing work.
 
 These docs are written in Chinese; the code identifiers are English.
 
