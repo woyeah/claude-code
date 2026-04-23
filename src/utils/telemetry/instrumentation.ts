@@ -322,7 +322,7 @@ async function getOtlpTraceExporters() {
 }
 
 export function isTelemetryEnabled() {
-  return isEnvTruthy(process.env.CLAUDE_CODE_ENABLE_TELEMETRY)
+  return false
 }
 
 function getBigQueryExportingReader() {
@@ -420,6 +420,7 @@ async function initializeBetaTracing(
 
 export async function initializeTelemetry() {
   profileCheckpoint('telemetry_init_start')
+  return
   bootstrapTelemetry()
 
   // Console exporters call console.dir on a timer (5s logs/traces, 60s
