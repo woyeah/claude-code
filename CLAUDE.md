@@ -39,6 +39,7 @@ Bun ≥ 1.3（bundle + runtime + `--compile`）· TypeScript/TSX · React 19 + I
 - **[`docs/guides/deployment.md`](./docs/guides/deployment.md)** — 构建所需一切：命令、stub、feature flag、排错
 - **[`docs/guides/architecture.md`](./docs/guides/architecture.md)** — 运行时全景（C4 层 + "按问题定位代码"）
 - **[`docs/plans/roadmap.md`](./docs/plans/roadmap.md)** — 二次开发计划；开新分支前必看
+- **[`docs/plans/server-mode-and-lang-tracing.md`](./docs/plans/server-mode-and-lang-tracing.md)** — `cli-server` entrypoint + LangFuse 埋点的设计与 5 阶段实施计划；开实施分支前必看
 - **`README.md`** — 泄露 backstory + 十几个彩蛋系统导读（BUDDY / KAIROS / ULTRAPLAN / Dream / Undercover / Coordinator / Penguin Mode / 40+ 工具注册表 / beta 头列表）
 - **`AGENTS.md`** — 跳板指回本文件
 

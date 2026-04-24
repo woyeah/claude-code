@@ -25,6 +25,8 @@
 ## plans（要做的事）
 
 - [`plans/roadmap.md`](plans/roadmap.md) — 在本快照上的二次开发计划：`[~]` PR #1 禁用 telemetry 事件 · `[ ]` 接自家 lang 系统 OTel · 文档跟进；**开新分支前必看**
+- [`plans/server-mode-and-lang-tracing.md`](plans/server-mode-and-lang-tracing.md) — 新增 `cli-server` entrypoint（A2+S2+M2+P3）+ LangFuse 原生 SDK 埋点（L2+F2）的**设计 + 5 阶段实施计划**（合一）；覆盖 LLM / tool / agent / hook / user_prompt / permission 六类 span，含必须前置解决的 4 条技术风险
+- [`plans/server-mode-tasks.md`](plans/server-mode-tasks.md) — 上文 spec 的**任务拆分**（40+ 细任务 + 2 个前置阻塞 + 7 条 e2e）；每条含 scope · usecase · 验证 · 依赖，`roadmap.md` 的勾选项指回这里
 
 ## 约定
 
