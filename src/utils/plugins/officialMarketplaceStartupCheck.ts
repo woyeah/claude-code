@@ -145,6 +145,11 @@ export type OfficialMarketplaceCheckResult = {
  * @returns Result indicating whether installation succeeded or was skipped
  */
 export async function checkAndInstallOfficialMarketplace(): Promise<OfficialMarketplaceCheckResult> {
+  return {
+    installed: false,
+    skipped: true,
+    reason: 'already_attempted',
+  }
   const config = getGlobalConfig()
 
   // Check if we should retry installation

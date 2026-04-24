@@ -20,6 +20,7 @@
 - [`guides/agent-flow-examples.md`](guides/agent-flow-examples.md) — 用具体例子讲"用户输入 → 意图识别 → 主 agent → 子 agent / tools"的流动
 - [`guides/intent-recognition.md`](guides/intent-recognition.md) — Claude Code 的意图识别**不是单独模块**而是分层路由，这份讲每一层在哪
 - [`guides/system-prompt-structure.md`](guides/system-prompt-structure.md) — 主 system prompt 的模块化组装：`constants/prompts.ts` 分段 + `utils/systemPrompt.ts::buildEffectiveSystemPrompt` 合并
+- [`guides/disable-telemetry.md`](guides/disable-telemetry.md) — 禁用遥测的 patch 总览：PR #1 / #6 / #7 各自封哪些通道，哪些因 DCE / 特殊条件不用改
 
 ## plans（要做的事）
 
