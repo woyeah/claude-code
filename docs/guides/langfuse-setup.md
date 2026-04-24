@@ -116,6 +116,6 @@ console.log("flushed, see", process.env.LANGFUSE_HOST + "/traces");
 
 LangFuse 起来 + `.env.local` 写好后：
 
-- **T0.2**（secrets 约定）— 本文档第 4 节已经覆盖；只需在 `docs/guides/deployment.md` 加一行指回来即可（实施时再做）
+- **T0.2**（secrets 约定）— ✅ 已完成；[`deployment.md` "本地凭证约定"](./deployment.md#本地凭证约定) 一节把读取优先级和"don't commit"写明并回链本文档第 4 节
 - **T2.0 SPIKE**（LangFuse SDK 在 Bun runtime 冒烟）— 在本节第 5 步基础上再跑一次 `bun build --compile` + 执行产物验证
 - **T5.3**（`langfuseTracer.ts` 实现）— 会 import `langfuse` SDK，基于本文档第 4 节写的 env 变量构造 client

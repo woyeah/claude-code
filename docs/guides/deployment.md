@@ -183,6 +183,12 @@ bun run build:dev           # dev 模式，版本号带时间戳
 
 WSL 和 Windows 的 `~/` 不同，OAuth 凭据跨不过去，要么在同一 shell 里 login 过，要么用 API key。
 
+## 本地凭证约定
+
+非 OAuth 的各类后端凭证（`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`、未来 server mode 的 `CC_SERVER_AUTH_TOKENS` 等）统一落仓库根目录的 `.env.local`——已在 `.gitignore`（见第 7 行），**不要** commit 任何 secret key。
+
+读取优先级：`process.env` > `.env.local` > 代码内默认值。自托管 LangFuse 的详细步骤（如何生成 key、往 `.env.local` 里写哪几行、轮换 / 备份注意事项）见 [`langfuse-setup.md` §4](./langfuse-setup.md#4--把凭证写进仓库)。
+
 ## 免责
 
 - 源码来自 2026-03-31 泄露的 npm sourcemap。仅研究用途。
