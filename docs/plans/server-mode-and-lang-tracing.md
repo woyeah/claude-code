@@ -5,8 +5,8 @@ status: draft
 date: 2026-04-24
 scope:
   - 新 entrypoint `src/entrypoints/server.tsx` 暴露本地 HTTP + WS server
-  - 沿用上游 direct-connect wire format（复用 `src/server/directConnectManager.ts` 协议定义）
-  - 多会话单进程模型（每会话独立 QueryEngine，共享 tool / MCP / plugin）
+  - 沿用上游 direct-connect WS wire format（复用 `src/server/directConnectManager.ts` 协议定义）
+  - 多会话单进程模型（每会话独立 QueryEngine；共享 base tool 定义 / MCP 连接池 / plugin cache，按 session 装配可见 tool pool）
   - 权限处理双模式（`interactive` / `policy`，默认 policy）
   - LangFuse 原生 SDK 埋点（LLM / tool / agent / hook / user_prompt / permission）
   - 新 build target `dist/cli-server`
@@ -98,7 +98,7 @@ related:
 | `src/server/controlBridge.ts` | 新增 | 把 `canUseTool` 调用翻译成 `control_request` / `control_response`；镜像 `src/cli/structuredIO.ts` |
 | `src/server/permissionHandler.ts` | 新增 | P3：interactive / policy 分派 |
 | `src/server/permissionPolicy.ts` | 新增 | policy 模式的纯函数规则引擎（复用 `utils/permissions/permissions.ts` 解析） |
-| `src/server/sharedAssembly.ts` | 新增 | 进程启动时一次性装配 tool pool / MCP 池 / plugin registry，所有 session 共享只读 snapshot |
+| `src/server/sharedAssembly.ts` | 新增 | 进程启动时一次性装配 base tool 定义 / MCP 连接池 / plugin cache；每个 session 按 permission / MCP 状态重新 assemble 可见 tool pool |
 | `src/services/lang/tracer.ts` | 新增 | `LangTracer` 接口 + `NoopTracer` 空实现 |
 | `src/services/lang/langfuseTracer.ts` | 新增 | 默认 LangFuse 实现 |
 | `src/services/lang/getLangTracer.ts` | 新增 | 单例工厂，按 env 选择实现 |
@@ -153,17 +153,18 @@ server 端副作用：
 
 ### 4.2 发消息
 
-```http
-POST /v1/sessions/<sid>/messages
-Content-Type: application/json
+**direct-connect 客户端 → server（主路径）**：同一条 WS 连接双向传输，客户端按 NDJSON 写入 `StdinMessage`。这必须匹配 `DirectConnectSessionManager.sendMessage()`，它不会调用 HTTP message endpoint。
 
-{ "type": "user", "message": { "role": "user", "content": "..." } }
+```json
+{"type":"user","message":{"role":"user","content":"..."},"parent_tool_use_id":null,"session_id":""}
 ```
 
 server 端：
 1. 在 trace root 下开 `user_prompt` span
 2. 调 `QueryEngine.submitMessage(...)`
-3. 立即返 `202 Accepted { "ok": true }`；消息流异步经 WS 推
+3. 消息流异步经同一条 WS 推回
+
+**可选 REST adapter（非 direct-connect 客户端）**：可以额外提供 `POST /v1/sessions/<sid>/messages`，但它只是把 HTTP body 转成同一个 session inbound queue；不得作为 direct-connect 兼容性的依据。
 
 ### 4.3 消息流（server → 客户端，WS）
 
@@ -182,13 +183,12 @@ server 端：
 
 ```
 ← {"type":"control_request","request_id":"<rid>","request":{"type":"can_use_tool",...}}
-→ POST /v1/sessions/<sid>/control/response
-    { "request_id":"<rid>", "response":{"behavior":"allow"} }
+→ {"type":"control_response","response":{"subtype":"success","request_id":"<rid>","response":{"behavior":"allow",...}}}
 ```
 
 **policy 模式**：server 侧 `PermissionHandler` 同步决策，不发 `control_request`。lang trace 记录 `permission` event（记 allow/deny + 依据规则）。
 
-**控制流 + 消息流单 writer 串行化**：同一 WS 连接上两类帧共用一条出站队列，顺序严格按业务发生顺序。参考 `src/cli/structuredIO.ts:161` 的 "single writer" 注释。
+**控制流 + 消息流单 writer 串行化**：同一 WS 连接上两类帧共用一条出站队列，顺序严格按业务发生顺序。入站同样只从 WS parser 进入 session inbound queue，避免 HTTP 与 WS 两条路径竞态。参考 `src/cli/structuredIO.ts:161` 的 "single writer" 注释。
 
 ### 4.5 会话终止
 
@@ -215,9 +215,10 @@ policy 模式不受此影响（不发 control_request）。
 
 | 上游 client 期望 | server 端提供 | 权威文件 |
 |---|---|---|
-| WS 接收按行分隔的 `StdoutMessage` | server WS 按 `SDKMessage` JSON + 换行分行发送 | `src/server/directConnectManager.ts:102-110` 的类型枚举 |
-| `control_request` / `control_response` 双向 | interactive 模式下 server 发 request、接 response | `src/cli/structuredIO.ts`（client 侧反向实现模板，server controlBridge 镜像它写；特别注意第 161 行 "single writer" 注释 + 第 362-405 行 duplicate response 处理） |
-| HTTP POST 发消息 body schema | `/v1/sessions/<sid>/messages` 接收并路由 | `src/utils/teleport/api.ts::sendEventToRemoteSession` —— server 的消息接收端必须严格对齐此 schema，否则 client 无法降级连本地 server |
+| WS 接收按行分隔的 `StdoutMessage` | server WS 按 `SDKMessage` JSON + 换行分行发送 | `src/server/directConnectManager.ts` 的 message handler |
+| WS 发送 `user` / `control_response` / `interrupt` | server WS parser 接收并路由到 session inbound queue | `src/server/directConnectManager.ts::sendMessage()` / `respondToPermissionRequest()` / `sendInterrupt()` |
+| `control_request` / `control_response` 双向 | interactive 模式下 server 通过 WS 发 request、从 WS 接 response | `src/cli/structuredIO.ts`（client 侧反向实现模板，server controlBridge 镜像它写；特别注意第 161 行 "single writer" 注释 + 第 362-405 行 duplicate response 处理） |
+| REST `POST /messages` / `/control/response` | 可选外部 API adapter，不是 direct-connect 兼容路径 | 若实现，必须转入同一个 inbound queue，不能绕过 WS 协议状态机 |
 | `Authorization: Bearer <token>` header | server 解析，核对 env 配置的 token 白名单 | — |
 
 ## 5. Lang 埋点
@@ -296,8 +297,8 @@ query_turn #N
 ### 5.4 "CC + 外部 LLM" 一棵树
 
 - CC 内的 LLM 调用埋点在 `services/api/logging.ts`。若 `ANTHROPIC_BASE_URL` 指向外部 gateway（LiteLLM / CLIProxyAPI / 自建），此处埋点已覆盖 model name / messages / tokens。
-- 如 gateway 自己也使用 LangFuse，`LangfuseTracer.startGeneration()` 把 LangFuse 的 `traceId` / `parentObservationId` 注入 HTTP 请求头（`langfuse-trace-id` / `langfuse-parent-id`），gateway 读 header 把自己的 span 挂到 CC generation 下，LangFuse UI 里两棵树合一。
-- SDK header 注入的具体位置优先封装单例 `tracedAnthropicClient`（若有）或在 `services/api/client.ts` 工厂注入 `defaultHeaders`；失败 fallback 到 `fetch` 层 monkey-patch。
+- 如 gateway 自己也使用 LangFuse / OTel，`LangfuseTracer.startGeneration()` 把当前 generation 的 trace context 注入标准 `traceparent` header；自家 gateway 可额外接受 `langfuse-trace-id` / `langfuse-parent-id` 兼容别名，但 canonical header 是 `traceparent`。这只做 header propagation，不恢复 OTel exporter。
+- SDK header 注入的具体位置优先封装单例 `tracedAnthropicClient`（若有）或在 `services/api/client.ts` 工厂注入 `defaultHeaders` / `fetch` 包装；失败 fallback 到 `fetch` 层 monkey-patch。
 
 ### 5.5 失败 / 边界
 
@@ -305,7 +306,7 @@ query_turn #N
 |---|---|
 | LangFuse 不可达 | SDK 自带 queue + 重试；超上限丢弃并 `console.warn`，不阻塞 session |
 | `LANGFUSE_PUBLIC_KEY` 未配置 | `getLangTracer()` 返回 `NoopTracer`，server 照跑 |
-| 进程退出 | `process.on('exit')` 里同步 `tracer.flush()`；非正常退出时 LangFuse SDK 内部持久化未发送 batch |
+| 进程退出 | 在 `SIGINT` / `SIGTERM` / server graceful shutdown 路径里 `await tracer.flush()`；`process.on('exit')` 只允许同步兜底日志，不能依赖异步 flush |
 | 超大 prompt / tool output | 按 `LANG_TRACER_MAX_FIELD_BYTES`（默认 64KB）截断，保留前后 N 字节 + `[...<truncated>]`；完整版写临时文件，LangFuse metadata 里存路径 |
 | 敏感字段 redaction | `LangfuseTracer` 接收可选 `redactor: (field, value) => string \| undefined`；默认不做，由部署方决定 |
 
@@ -336,7 +337,7 @@ const TARGETS = {
 
 Server build 的 tree-shaking 策略：
 - server.tsx 不 import `src/components/**` / `src/screens/**` / `src/ink/**` / `src/vim/**` / `src/voice/**` / `src/buddy/**`
-- Externals 追加 `ink`, `react-devtools-core`
+- `EXTERNALS` 不追加已安装 UI runtime（`ink` / `@inkjs/ui` / React 渲染层等）；这些包若被 require，`bun --compile` 产物会运行期找不到或把问题隐藏
 - **但 tree-shaking 有两个已知漏点**（见 §6.3），需要单独处理
 
 ### 6.2 `package.json` scripts
@@ -367,12 +368,12 @@ Server build 的 tree-shaking 策略：
 - server build 下 tool 只加载 `.logic.ts`，`renderResult` 返回 `{ type: 'text', text: ... }` POJO
 - 实施阶段先用 `bun build --analyze dist/cli-server.js` 扫出全部受影响文件
 
-**漏点 C 兜底**（如果 A/B 处理不彻底）：在 server build 的 externals 里直接加 `ink` + React 相关包做 shim，让它们成空实现；接受 ~3MB 冗余代码换实施简单性。
+**漏点 C 兜底**（如果 A/B 处理不彻底）：使用 server-only shim 模块或 compile-time alias，把 UI-only import 显式改到空实现；**不要**靠 `--external ink` 兜底。`external` 只能用于确定不会在运行期 require 的包。
 
 ### 6.4 预期产物
 
 - `dist/cli.exe` ~130MB（现状不变）
-- `dist/cli-server.exe` ~80MB（估值，砍掉 Ink / React 渲染后；若走漏点 C 兜底则 ~85MB）
+- `dist/cli-server.exe` ~80MB（估值，砍掉 Ink / React 渲染后；若走 shim 兜底则 ~85MB）
 
 ## 7. 实施阶段
 
@@ -385,13 +386,13 @@ Server build 的 tree-shaking 策略：
 **触达文件**：
 - 新增 `src/entrypoints/server.tsx` — fast-path 处理 `--version` / `--help`，然后 `await import('../server/serverMain.js')` 调用 `serverMain()`
 - 新增 `src/server/serverMain.ts` — 占位 `console.log('cli-server booting')`
-- 新增 `src/server/config.ts` — 从 env/CLI 读取 `PORT`、`HOST`、`AUTH_TOKEN`、`IDLE_TIMEOUT_MS`、`MAX_SESSIONS`、`WORKSPACE`、`LANGFUSE_*`
+- 新增 `src/server/config.ts` — 从 env/CLI 读取 `CC_SERVER_PORT`、`CC_SERVER_HOST`、`CC_SERVER_AUTH_TOKENS`、`CC_SERVER_SESSION_GRACE_MS`、`CC_SERVER_MCP_IDLE_MS`、`CC_SERVER_DEFAULT_CWD`、`LANGFUSE_*`
 - 改动 `scripts/build.ts` — 参数化 entrypoint / outfile；新增 `bun run build:server` 脚本；`features` 机制按 §6.1
 - 改动 `package.json` — 增加 `build:server` / `build:server:nocompile`
 - 改动 `docs/guides/deployment.md` — 新增"两个 build target"章节
 
 **关键实现点**：
-1. server build 的 EXTERNALS 追加 Ink/React-DOM 渲染层相关包（`ink`, `ink-text-input` 等），让 bundler 报告真实 DCE 边界
+1. server build 不把 Ink/React-DOM 渲染层相关包加入 EXTERNALS；若 `bun build --analyze` 仍显示 UI 依赖，先修 import/gating/shim，而不是 external 掩盖
 2. `server.tsx` 绝对不 `import('../main.tsx')`，彻底切开两个 compose root
 3. `CLAUDE_CODE_BUILD_TARGET` 运行时可读（供 tracer metadata 使用，见 §11.3）；`SERVER_BUILD` feature flag 用于编译期 DCE
 
@@ -403,20 +404,20 @@ Server build 的 tree-shaking 策略：
 
 ### 7.2 阶段 2 — HTTP/WS wire format server 端，单会话可跑通（L）
 
-**目标**：server 能创建单会话、跑通 `can_use_tool` + 消息流、client 能用已有 `DirectConnectSessionManager` 连上去。
+**目标**：server 能创建单会话、跑通 WS 双向 `user` / `control_request` / `control_response` + 消息流，client 能用已有 `DirectConnectSessionManager` 连上去。
 
 **前置 spike**：在本阶段开头先跑 LangFuse JS SDK 在 Bun runtime 下的最小可用性冒烟（新建 trace + 立刻 flush）。不行就降级为直调 LangFuse REST API。这个 spike 的目的是**提前**确认阶段 5 不会翻车。
 
 **触达文件**：
-- 新增 `src/server/httpServer.ts` — `Bun.serve`；路由：`POST /v1/sessions`、`WS /v1/sessions/:sid/stream`、`POST /v1/sessions/:sid/messages`、`POST /v1/sessions/:sid/control/response`、`DELETE /v1/sessions/:sid`、`GET /healthz`
-- 新增 `src/server/serverSession.ts` — 单会话容器：持有 `QueryEngine` + `AbortController` + WS 客户端集合；外暴 `submitPrompt()` / `interrupt()` / `dispatchControlResponse()`
-- 新增 `src/server/controlBridge.ts` — 把 server-side `canUseTool` 调用翻译成 `control_request` 写 WS，等待 `control_response`；镜像 `src/cli/structuredIO.ts` 的反向逻辑
+- 新增 `src/server/httpServer.ts` — `Bun.serve`；路由：`POST /v1/sessions`、`WS /v1/sessions/:sid/stream`、`DELETE /v1/sessions/:sid`、`GET /healthz`；REST `POST /messages` / `/control/response` 只作为非 direct-connect adapter（可延后）
+- 新增 `src/server/serverSession.ts` — 单会话容器：持有 `QueryEngine` + `AbortController` + WS 客户端集合；外暴 `submitPrompt()` / `interrupt()` / `dispatchControlResponse()` / `handleInboundControlResponse()` / `handleInboundUserMessage()`
+- 新增 `src/server/controlBridge.ts` — 把 server-side `canUseTool` 调用翻译成 `control_request` 写 WS，等待 WS 入站 `control_response`；镜像 `src/cli/structuredIO.ts` 的反向逻辑
 - 新增 `src/server/directConnectProtocol.ts` — 导出要 drop 的 `keep_alive` / `streamlined_*` 类型、要转发的 SDKMessage 类型，严格对齐 `directConnectManager.ts:102-110`
-- 改动 `src/server/serverMain.ts` — 启动 `httpServer.listen()`；SIGINT 优雅关闭
+- 改动 `src/server/serverMain.ts` — 启动 `httpServer.listen()`；SIGINT / SIGTERM 优雅关闭
 
 **关键实现点**：
-1. wire 完全复用 direct-connect 格式：WS 消息为 NDJSON，一条一个 `StdoutMessage`；`control_request.request_id` UUID v4，`control_response` 严格 echo
-2. `POST /v1/sessions` 响应 `{ sessionId, wsUrl }`，body schema 对齐 `src/utils/teleport/api.ts::sendEventToRemoteSession`
+1. wire 完全复用 direct-connect 格式：WS 双向 NDJSON；server 出站一条一个 `StdoutMessage`，client 入站一条一个 `StdinMessage`；`control_request.request_id` UUID v4，`control_response` 严格 echo
+2. `POST /v1/sessions` 响应 `{ sessionId, wsUrl }`；DirectConnect 客户端后续只用 `wsUrl` 发消息 / 权限响应
 3. 控制流和消息流在 WS 出站队列**单 writer 串行化**（§4.4）
 4. WS 客户端掉线 → session 转 `detached` 保留 grace period（§4.5.1）
 
@@ -432,7 +433,7 @@ Server build 的 tree-shaking 策略：
 
 **触达文件**：
 - 新增 `src/server/sessionRegistry.ts` — `Map<sid, ServerSession>` + LRU idle timeout；共享装配在 `sharedAssembly` 初始化后注入每个 session
-- 新增 `src/server/sharedAssembly.ts` — 启动时一次性装配 tool pool / MCP 池 / plugin registry；所有 session 读取只读 snapshot（`Object.freeze`）
+- 新增 `src/server/sharedAssembly.ts` — 启动时一次性装配 base tool 定义 / MCP 连接池 / plugin cache / agent definitions；所有 session 读取只读基础 snapshot，再按 session permission / MCP 状态调用 `assembleToolPool()`
 - 新增 `src/server/permissionPolicy.ts` — 纯函数规则引擎：`(toolName, input, sessionContext) => PermissionResult`；规则来源：`POST /v1/sessions` body 的 `allowedTools` / `deniedTools` / `permissionMode` + server-wide default
 - 新增 `src/server/permissionHandler.ts` — 根据 session 的 `permissionHandling` 分派到 interactive（走 controlBridge）或 policy（同步决策）；统一 `CanUseToolFn` 接口
 - 改动 `src/server/serverSession.ts` — 构造 QueryEngine 时注入 `permissionHandler` 作为 `canUseTool`
@@ -441,8 +442,9 @@ Server build 的 tree-shaking 策略：
 1. policy 规则支持 glob（如 `Bash(npm test*)`）和 tool schema path match，复用 `utils/permissions/permissions.ts` 的解析函数
 2. interactive 模式 `control_request` 60s 超时自动 deny
 3. `POST /v1/sessions` body 支持 `policyFile: "<path>"`，server 端加载 + hash 校验
-4. 本阶段同时处理 §11.1（bootstrap/state.ts 的 AsyncLocalStorage 改造）——这是 M2 的**硬前提**，不能推迟
-5. 本阶段同时处理 §11.4（MCP 池引用计数），或落 MVP fallback（启动期装配，不支持 per-session MCP 差异）
+4. 可见 tool pool 必须 per-session assemble；不得把 `getTools(permissionContext)` / `assembleToolPool(permissionContext, mcpTools)` 的最终结果作为进程级共享对象
+5. 本阶段同时处理 §11.1（bootstrap/state.ts 的 AsyncLocalStorage 改造）——这是 M2 的**硬前提**，不能推迟
+6. 本阶段同时处理 §11.4（MCP 池引用计数），或落 MVP fallback（启动期装配，不支持 per-session MCP 差异）
 
 **验证**：两个客户端同时连 server 开两个 session，一个 policy 跑 `bash echo hi` 直过、另一个 interactive 弹权限；观察两 session 的 `mutableMessages` / `readFileState` 完全独立；interactive 超时路径至少跑一次。
 
@@ -455,7 +457,7 @@ Server build 的 tree-shaking 策略：
 **目标**：`bun run build:server` 产物不含 Ink reconciler / vim / voice / buddy；bundle 体积降到 ~80MB。
 
 **触达文件**：
-- 改动 `scripts/build.ts` — server build 的 EXTERNALS 加 `ink`、`ink-*`、`@inkjs/ui`
+- 改动 `scripts/build.ts` — 增加 server target，但保持 EXTERNALS 只含确定不会运行期 require 的包；必要时加 server-only alias/shim，不加 `ink` external
 - 新增 `src/utils/buildTarget.ts` — 导出 `IS_SERVER_BUILD`，编译期折叠
 - 改动 `src/QueryEngine.ts` — 处理漏点 A（抽出 `src/utils/messageSelection.ts` pure-logic 版）
 - 改动受漏点 B 影响的 tools — 拆 `.logic.ts` + `.ui.tsx`，具体文件由 `bun build --analyze` 扫出
@@ -486,20 +488,20 @@ Server build 的 tree-shaking 策略：
 - 新增 `src/services/lang/getLangTracer.ts` — 按 env 返实例
 - 新增 `src/services/lang/redactor.ts` — 独立 redactor（必须绕开 §11.2 陷阱）
 - 新增 `src/services/lang/context.ts` — `AsyncLocalStorage<TraceContext>` 贯穿一次 `submitMessage`；暴露 `getCurrentTrace()`
-- 新增 `src/services/lang/propagation.ts` — 序列化 / 反序列化 `langfuse-trace-id` HTTP header（可选支持 W3C `traceparent` 双协议）
+- 新增 `src/services/lang/propagation.ts` — 序列化 / 反序列化 W3C `traceparent`；可选解析 / 镜像 `langfuse-trace-id`、`langfuse-parent-id` 作为自家 gateway 兼容别名
 - 改动 §5.2 表里列出的 8 个埋点文件
-- 改动 `src/services/api/client.ts`（或等价位置）— LLM 出站请求 header 注入 `langfuse-trace-id`
-- 改动 `src/server/httpServer.ts` — `POST /v1/sessions/:sid/messages` 解析 header → `propagation.ts` → 绑 AsyncLocalStorage
+- 改动 `src/services/api/client.ts`（或等价位置）— LLM 出站请求 header 注入 `traceparent`（可额外镜像 LangFuse 兼容别名）
+- 改动 `src/server/httpServer.ts` — WS connect headers（以及可选 REST adapter headers）解析 trace context → `propagation.ts` → 绑 AsyncLocalStorage
 
 **关键实现点**：
 1. 抽象接口绑死 LangFuse 概念（trace/span/generation）但实现可换；**不**走 OTel SDK，避免被 PR#1 的 OTel no-op 拦（§11.2）
 2. LLM span 用 LangFuse 的 `generation` 类型，挂 `model` / `input_tokens` / `output_tokens` / `cost`；复用 `totalUsage` 聚合
 3. `permission` event：interactive 模式记审批时长，policy 模式几乎 0ms
-4. trace id 在 `POST /v1/sessions/:sid/messages` header 提取；没有就自建。同时写入 response header，便于客户端 UI 展示 trace 链接
-5. SDK header 注入：优先 `services/api/client.ts` 工厂注入 `defaultHeaders`，用 span context 每轮覆盖；fallback 到 fetch monkey-patch
+4. trace context 从 WS connect headers 或可选 REST adapter header 提取；没有就自建。server 返回 / 推送 trace URL 或 trace id，便于客户端 UI 展示 trace 链接
+5. SDK header 注入：优先 `services/api/client.ts` 工厂注入 `defaultHeaders` 或 fetch wrapper，用当前 generation 的 span context 每轮覆盖；fallback 到 fetch monkey-patch
 6. `tracer.metadata` 里 CC 版本读 `package.json`，不依赖 `getAttributionHeader`（§11.3）
 
-**验证**：设好 LangFuse env → 跑场景 "列出目录" → LangFuse 面板出现 trace：`session` > `user_prompt` + `query_turn` > `generation` + `tool(LS)` > `event permission`；设 `ANTHROPIC_BASE_URL` 指向自带 LangFuse propagation 的 gateway，验证 CC generation 与 gateway span 同一 trace id。
+**验证**：设好 LangFuse env → 跑场景 "列出目录" → LangFuse 面板出现 trace：`session` > `user_prompt` + `query_turn` > `generation` + `tool(LS)` > `event permission`；设 `ANTHROPIC_BASE_URL` 指向支持 `traceparent` 的 gateway，验证 CC generation 与 gateway span 同一 trace id。
 
 **依赖**：阶段 2（header 解析）。可与阶段 3/4 并行；阶段 5 尾段（subagent 嵌套 trace）需要阶段 3 的 session 结构稳定。
 
@@ -513,7 +515,7 @@ Server build 的 tree-shaking 策略：
 | interactive → deny | `control_request` → deny → tool 被拒 → LangFuse 里 `permission` event `decision=deny` |
 | policy 直接决策 | `allowedTools=[Read]` 会话调 Bash 被拒，不发 `control_request`；LangFuse 里 event 带 policy 规则依据 |
 | interactive + WS 断连 | 断连期间的 control_request 进 pending；重连补发或 grace 超时统一 deny |
-| CC + gateway 一棵树 | `ANTHROPIC_BASE_URL` 指向自带 LangFuse 的 gateway，trace 同 id 挂齐 |
+| CC + gateway 一棵树 | `ANTHROPIC_BASE_URL` 指向支持 `traceparent` 的 gateway，trace 同 id 挂齐 |
 | 故障降级 | LangFuse 宕机 → server 照跑 + console warn；不设 key → NoopTracer；server SIGINT → 最后 flush 成功 |
 
 ## 9. 风险与应对
@@ -525,7 +527,7 @@ Server build 的 tree-shaking 策略：
 | LangFuse JS SDK 在 Bun runtime 兼容性 | 低 | 高 | 阶段 2 开头单独 spike；不行降级直调 LangFuse REST |
 | direct-connect wire 细节少实现 | 高 | 中 | 共享上游 `directConnectManager.ts` / `remote/*` 类型定义，不自造 wire；`cli/structuredIO.ts` 直接镜像 |
 | 意外触及 PR#1 no-op 的代码路径 | 低 | 中 | 新 tracer 代码与 `src/utils/telemetry/*` / `src/services/analytics/*` 完全解耦；PR 审查 grep 验证 |
-| Ink 深度嵌入 tool 导致 DCE 不彻底 | 中 | 中 | 漏点 A/B 拆分；实在不行走漏点 C 兜底（+5MB） |
+| Ink 深度嵌入 tool 导致 DCE 不彻底 | 中 | 中 | 漏点 A/B 拆分；实在不行走 server-only shim 兜底（+5MB）；禁止用 `--external ink` 掩盖 |
 | 前端 spec 与本文档契约不一致 | 中 | 中 | §4 wire format 是权威；前端单独 spec 必须对齐 |
 
 ## 10. 明确排除
@@ -595,8 +597,8 @@ Server build 的 tree-shaking 策略：
 |---|---|---|
 | `POST` | `/v1/sessions` | 创建 session |
 | `DELETE` | `/v1/sessions/<sid>` | 关闭 session |
-| `POST` | `/v1/sessions/<sid>/messages` | 发用户消息 |
-| `POST` | `/v1/sessions/<sid>/control/response` | interactive 权限应答 |
+| `POST` | `/v1/sessions/<sid>/messages` | 可选 REST adapter：发用户消息（direct-connect 不用此路径） |
+| `POST` | `/v1/sessions/<sid>/control/response` | 可选 REST adapter：interactive 权限应答（direct-connect 走 WS `control_response`） |
 | `GET` | `/v1/sessions/<sid>` | 查询 session 状态（可选，便于前端） |
 | `GET` | `/healthz` | 健康检查 |
 
@@ -604,7 +606,7 @@ Server build 的 tree-shaking 策略：
 
 | Path | 方向 | 内容 |
 |---|---|---|
-| `/v1/sessions/<sid>/stream` | server → client | `SDKMessage` JSON（行分隔），包括 assistant / user / result / control_request |
+| `/v1/sessions/<sid>/stream` | 双向 | server → client: `SDKMessage` / `control_request` NDJSON；client → server: `user` / `control_response` / `interrupt` NDJSON |
 
 ### 12.3 环境变量全表
 
@@ -615,6 +617,7 @@ Server build 的 tree-shaking 策略：
 | `CC_SERVER_AUTH_TOKENS` |（空） | 逗号分隔 Bearer token 白名单；空则不鉴权 |
 | `CC_SERVER_SESSION_GRACE_MS` | `60000` | WS 断连后 session 清理宽限期 |
 | `CC_SERVER_MCP_IDLE_MS` | `300000` | MCP server 无引用后的 idle 关闭阈值 |
+| `CC_SERVER_DEFAULT_CWD` | 当前进程 cwd | `POST /v1/sessions` 未传 `cwd` 时的默认工作目录 |
 | `CLAUDE_CODE_BUILD_TARGET` | — | 构建期注入，server build 为 `'server'`；供 tracer metadata 使用 |
 | `ANTHROPIC_BASE_URL` | `api.anthropic.com` | LLM 调用端点，可指向外部 gateway |
 | `ANTHROPIC_AUTH_TOKEN` | — | LLM API key |
@@ -680,7 +683,7 @@ PR#1 / #6 / #7 的 no-op 状态保持不变：lang 埋点走业务层，与 `src
 - `src/server/directConnectManager.ts` —— client 侧 wire format 现成实现，server 端镜像它
 - `src/remote/RemoteSessionManager.ts` —— 远程会话协议客户端，参考其 WS + control 链路
 - `src/cli/structuredIO.ts` —— 859 行"反向实现"模板，server controlBridge 直接对照写
-- `src/utils/teleport/api.ts::sendEventToRemoteSession` —— HTTP POST body schema 权威
+- `src/utils/teleport/api.ts::sendEventToRemoteSession` —— 远程模式 HTTP body schema 参考；direct-connect 兼容路径以 WS `sendMessage()` / `respondToPermissionRequest()` 为准
 - `src/QueryEngine.ts` —— 会话引擎，改动最多；重点看 `mutableMessages` / `readFileState` / `totalUsage` / lazy require 的 `MessageSelector`
 - `scripts/build.ts` —— build target 参数化起点
 - `docs/guides/disable-telemetry.md` —— PR#1/#6/#7 的 no-op 清单，避免踩坑

@@ -55,14 +55,14 @@ parent: server-mode-and-lang-tracing.md
 
 ### T1.3 · 新增 `src/server/config.ts` env loader (S)
 
-- **Scope**：读 `CC_SERVER_PORT` / `CC_SERVER_HOST` / `CC_SERVER_AUTH_TOKENS` / `CC_SERVER_SESSION_GRACE_MS` / `CC_SERVER_MCP_IDLE_MS` / `WORKSPACE` / `LANGFUSE_*`；导出 `ServerConfig` 对象 + `loadConfig()` 工厂
+- **Scope**：读 `CC_SERVER_PORT` / `CC_SERVER_HOST` / `CC_SERVER_AUTH_TOKENS` / `CC_SERVER_SESSION_GRACE_MS` / `CC_SERVER_MCP_IDLE_MS` / `CC_SERVER_DEFAULT_CWD` / `LANGFUSE_*`；导出 `ServerConfig` 对象 + `loadConfig()` 工厂
 - **Usecase**：后续阶段所有配置都过这一个入口，阶段 2 的 `Bun.serve` 直接消费
 - **验证**：写 unit-level 冒烟：`CC_SERVER_PORT=9090 bun -e "const c = await import('./src/server/config'); console.log(c.loadConfig())"` 打印正确端口
 - **依赖**：无（纯配置模块，独立）
 
 ### T1.4 · 参数化 `scripts/build.ts` 的 TARGETS map (S)
 
-- **Scope**：加 `const TARGETS = { cli: {...}, server: {...} }`；server target 带 `features: ['SERVER_BUILD']` + EXTERNALS 追加 `ink`, `react-devtools-core`；CLI 调用改成 `bun run scripts/build.ts <target>`
+- **Scope**：加 `const TARGETS = { cli: {...}, server: {...} }`；server target 带 `features: ['SERVER_BUILD']`；CLI 调用改成 `bun run scripts/build.ts <target>`。不要把已安装 UI runtime（如 `ink` / `@inkjs/ui`）加入 `EXTERNALS`
 - **Usecase**：单一 build script 两个产物，未来加 target 一行配置搞定
 - **验证**：`bun run scripts/build.ts cli && ./dist/cli.exe --version` 正常；`bun run scripts/build.ts server && ./dist/cli-server.exe --version` 正常；两个产物同时存在
 - **依赖**：T1.1, T1.2
@@ -95,35 +95,35 @@ parent: server-mode-and-lang-tracing.md
 
 ### T2.1 · 新增 `src/server/directConnectProtocol.ts` wire 类型 (S)
 
-- **Scope**：把 `src/server/directConnectManager.ts:102-110` 里 client 侧期望的 `StdoutMessage` / `control_request` / `control_response` 类型**镜像**过来；drop 掉 client-only 的 `keep_alive` / `streamlined_*`
-- **Usecase**：server 写出的帧类型与 client 期望 100% 对齐，避免自造 wire
-- **验证**：在 `httpServer.ts` 里 import + TypeScript 编译通过；序列化一条 `SDKMessage` 能被 `directConnectManager.ts` 反序列化（跑 T2.6 的 e2e 冒烟时一并验证）
+- **Scope**：把 `src/server/directConnectManager.ts` 里 client 侧期望的出站 `StdoutMessage` / 入站 `StdinMessage` / `control_request` / `control_response` 类型**镜像**过来；drop 掉 server 不需要转发的 `keep_alive` / `streamlined_*`
+- **Usecase**：server 写出和读入的帧类型与现有 `DirectConnectSessionManager` 100% 对齐，避免自造 wire
+- **验证**：在 `httpServer.ts` 里 import + TypeScript 编译通过；序列化一条 `SDKMessage` 能被 `directConnectManager.ts` 反序列化，序列化一条 `user` / `control_response` 能被 server WS parser 路由（跑阶段 2 e2e 冒烟时一并验证）
 - **依赖**：无（纯类型定义）
 
 ### T2.2 · 新增 `src/server/httpServer.ts` Bun.serve + 路由 (M)
 
-- **Scope**：`Bun.serve({ port, fetch, websocket })`；路由 `POST /v1/sessions` / `WS /v1/sessions/:sid/stream` / `POST /v1/sessions/:sid/messages` / `POST /v1/sessions/:sid/control/response` / `DELETE /v1/sessions/:sid` / `GET /healthz`
-- **Usecase**：HTTP + WS 合一端口（简化部署）；路由层是 session 的 demux
-- **验证**：`curl -X POST localhost:8080/v1/sessions -d '{...}'` 收到 `{sessionId, wsUrl}`；`curl localhost:8080/healthz` → 200
+- **Scope**：`Bun.serve({ port, fetch, websocket })`；必需路由 `POST /v1/sessions` / `WS /v1/sessions/:sid/stream` / `DELETE /v1/sessions/:sid` / `GET /healthz`；`POST /v1/sessions/:sid/messages` / `POST /v1/sessions/:sid/control/response` 只是非 direct-connect REST adapter，可延后
+- **Usecase**：HTTP 负责 session 管理，WS 负责 direct-connect 双向消息；路由层是 session 的 demux
+- **验证**：`curl -X POST localhost:8080/v1/sessions -d '{...}'` 收到 `{sessionId, wsUrl}`；`curl localhost:8080/healthz` → 200；WS 连接后能发送一条 `user` NDJSON 并收到响应
 - **依赖**：T2.1
 
 ### T2.3 · 新增 `src/server/serverSession.ts` 单会话容器 (M)
 
-- **Scope**：类 `ServerSession`：持有 `QueryEngine` + `AbortController` + WS 客户端 Set + pending control_request Map + **WS 出站单 writer 队列**（T2.7 的不变式从诞生起就立）；外暴 `submitPrompt()` / `interrupt()` / `dispatchControlResponse()` / `attachWebSocket()` / `detachWebSocket()` / `enqueueOutbound()`
+- **Scope**：类 `ServerSession`：持有 `QueryEngine` + `AbortController` + WS 客户端 Set + pending control_request Map + **WS 出站单 writer 队列**（T2.7 的不变式从诞生起就立）；外暴 `submitPrompt()` / `handleInboundUserMessage()` / `handleInboundControlResponse()` / `interrupt()` / `attachWebSocket()` / `detachWebSocket()` / `enqueueOutbound()`；可选 REST adapter 调同一组 inbound API
 - **Usecase**：把"一次会话"的所有状态聚到一个类里，阶段 3 的 SessionRegistry 批量管理；队列从第一天就存在，避免 T2.4 先写 `ws.send()` 再返工
 - **验证**：脚本冒烟观察真实行为：`const s = new ServerSession(cfg); s.onOutbound(m => console.log(m.type)); await s.submitPrompt("hi")` 至少打印一条 `assistant` 或 `result` 事件；`s.interrupt()` 后无挂起
 - **依赖**：T2.1
 
 ### T2.4 · 新增 `src/server/controlBridge.ts` 双向 control 翻译 (M)
 
-- **Scope**：把 server 侧 `canUseTool` 调用翻译成 `control_request` 走 **T2.3 的出站队列**（严禁直接 `ws.send`）；`POST /v1/sessions/:sid/control/response` 收到后解析 → 解 Promise。**严格镜像** `src/cli/structuredIO.ts:161`（single writer）和 `:362-405`（duplicate response 处理）
+- **Scope**：把 server 侧 `canUseTool` 调用翻译成 `control_request` 走 **T2.3 的出站队列**（严禁直接 `ws.send`）；WS 入站 `control_response` 收到后解析 → 解 Promise。可选 REST `/control/response` 只能转入同一 inbound API。**严格镜像** `src/cli/structuredIO.ts:161`（single writer）和 `:362-405`（duplicate response 处理）
 - **Usecase**：interactive 模式的权限弹窗；阶段 3 的 permissionHandler 会 call 这里
 - **验证**：client 连 server，server 触发一次权限请求，client 按协议返回 response，server 收到后 tool 继续；同一 `request_id` 重复 response 被丢弃（grep `:362-405` 逻辑）
 - **依赖**：T2.3, T2.7（队列不变式先立）
 
-### T2.5 · `serverMain.ts` 装配 `httpServer` + SIGINT 优雅关闭 (S)
+### T2.5 · `serverMain.ts` 装配 `httpServer` + SIGINT/SIGTERM 优雅关闭 (S)
 
-- **Scope**：`httpServer.listen()`；`process.on('SIGINT', async () => { await httpServer.stop(); await tracer.flush(); process.exit(0) })`。**session 级清理（`sessionRegistry.closeAll()`）留给 T3.1 扩展同一 handler**——阶段 2 无 registry
+- **Scope**：`httpServer.listen()`；注册共用 graceful shutdown handler 处理 `SIGINT` / `SIGTERM`：`await httpServer.stop(); await tracer.flush(); process.exit(0)`。不要依赖 `process.on('exit')` 做 async flush。**session 级清理（`sessionRegistry.closeAll()`）留给 T3.1 扩展同一 handler**——阶段 2 无 registry
 - **Usecase**：Ctrl-C 能干净退出，已跑的 trace 也 flush 完
 - **验证**：`./dist/cli-server.exe` 启动 → Ctrl-C → 无 hang，exit code 0
 - **依赖**：T2.2
@@ -165,9 +165,9 @@ parent: server-mode-and-lang-tracing.md
 
 > 编号保留为 T3.2（向后兼容），但**实现顺序在 T3.1 之前**——sessionRegistry 依赖本任务产物。
 
-- **Scope**：`bootSharedAssembly(cfg): Promise<SharedAssembly>` 启动时一次性装配 tool pool（`getAllBaseTools()`）/ MCP 池 / plugin registry / agent definitions；`Object.freeze` 后注入每个 session
-- **Usecase**：避免每个 session 重复装配（tool pool 装配是 `tools.ts::getTools()` 里最重的一步）；是 session 构造 QueryEngine 的前置物料
-- **验证**：启动 server 后 `sharedAssembly` 单例不变；3 个 session 读到的 tool 列表是**同一引用**（用 `===` 验证）
+- **Scope**：`bootSharedAssembly(cfg): Promise<SharedAssembly>` 启动时一次性装配 base tool definitions（`getAllBaseTools()` 的不可变源）、MCP 连接池、plugin cache / registry、agent definitions；`Object.freeze` 后注入每个 session。**最终可见 tool pool 仍由每个 session 按 `permissionContext` + session MCP tools 调 `assembleToolPool()` 生成**
+- **Usecase**：避免重复初始化重资源，同时保留 cwd / permission / MCP / plugin 差异导致的 per-session tool filtering
+- **验证**：启动 server 后 `sharedAssembly` 单例不变；两个 session 使用不同 `deniedTools` 时可见 tool 列表不同；base tool definition registry 可共享引用
 - **依赖**：T3.0
 
 ### T3.1 · 新增 `src/server/sessionRegistry.ts` (M)
@@ -247,11 +247,11 @@ parent: server-mode-and-lang-tracing.md
 - **依赖**：T4.2
 - **注意**：工作量取决于 T4.2 清单长度；长则拆子任务
 
-### T4.5 · `scripts/build.ts` server externals 追加 (XS)
+### T4.5 · `scripts/build.ts` server external guardrail (XS)
 
-- **Scope**：server target 的 `EXTERNALS` 数组加 `ink`, `ink-*`, `@inkjs/ui`, `react-devtools-core`
-- **Usecase**：让 bundler 强制不把这些打进去；即使 T4.3/T4.4 漏一条，externals 也兜底
-- **验证**：server bundle grep `from "ink"` 无结果（只 `external "ink"` 占位）
+- **Scope**：确认 server target **不**把已安装 UI runtime（`ink`, `ink-*`, `@inkjs/ui`, React 渲染层等）加入 `EXTERNALS`；必要时在 build script 加注释 / 静态断言。T4.3/T4.4 若漏 import，必须用 gating / pure-logic split / server-only shim 修掉
+- **Usecase**：避免 `bun --compile` 编译通过但运行期 `Cannot find module 'ink'`
+- **验证**：`scripts/build.ts` 里没有 `ink` / `@inkjs/ui` external；server bundle analyze 无 UI runtime import；若使用 shim，运行一次 Read tool 不触发真实 Ink require
 - **依赖**：T4.1
 
 ### T4.6 · Plugin Ink shim fallback（**条件触发**）(S)
@@ -265,7 +265,7 @@ parent: server-mode-and-lang-tracing.md
 ### E2E · T4-Smoke bundle 体积 + 启动 (XS)
 
 - **Usecase**：Phase 4 成果量化
-- **步骤**：`ls -la dist/cli-server.exe` 体积 ≤ 85MB（目标 80，兜底 C 漏点时 85）；`./dist/cli-server.exe` 启动跑 Read tool 一次，stdout 无任何 Ink escape 序列
+- **步骤**：`ls -la dist/cli-server.exe` 体积 ≤ 85MB（目标 80，shim 兜底时 85）；`./dist/cli-server.exe` 启动跑 Read tool 一次，stdout 无任何 Ink escape 序列
 - **依赖**：T4.3, T4.4, T4.5
 
 ---
@@ -309,9 +309,9 @@ parent: server-mode-and-lang-tracing.md
 
 ### T5.6 · 新增 `src/services/lang/propagation.ts` trace header (S)
 
-- **Scope**：序列化 / 反序列化 `langfuse-trace-id` / `langfuse-parent-id` HTTP header；可选支持 W3C `traceparent`
-- **Usecase**：外部系统（gateway / 前端）传 trace id 来，server 延续同一棵 trace
-- **验证**：`POST /v1/sessions/:sid/messages` 带 header → server 创建的 root span parent_id 正确；response header 也回 trace id 供前端展示链接
+- **Scope**：序列化 / 反序列化 W3C `traceparent` header（32 hex trace id + 16 hex span id）；可选解析 / 镜像 `langfuse-trace-id` / `langfuse-parent-id` 作为自家 gateway 兼容别名
+- **Usecase**：外部系统（gateway / 前端）传 trace context 来，server 延续同一棵 trace；不启用 OTel exporter
+- **验证**：WS connect headers 或可选 REST adapter 带 `traceparent` → server 创建的 root span parent_id 正确；server 返回 / 推送 trace id 供前端展示链接
 - **依赖**：T5.1
 
 ### T5.7 · 埋点 `services/api/logging.ts`（LLM generation）(M)
@@ -365,9 +365,9 @@ parent: server-mode-and-lang-tracing.md
 
 ### T5.14 · LLM 出站 header 注入（`services/api/client.ts`）(M)
 
-- **Scope**：**用 T5.6 `propagation.ts` 的序列化函数**在 Anthropic SDK client 工厂注入 `defaultHeaders: { 'langfuse-trace-id': ..., 'langfuse-parent-id': ... }`；每轮 generation 前用 ALS context 的当前 span 覆盖；fallback 到 fetch monkey-patch
-- **Usecase**：外部 gateway（LiteLLM / CLIProxyAPI / 自建）若也接 LangFuse，两棵 trace 自动合并
-- **验证**：`ANTHROPIC_BASE_URL` 指向一个记录 header 的 mock gateway → gateway log 看到 `langfuse-trace-id` 且与 CC generation 的 trace_id 一致
+- **Scope**：**用 T5.6 `propagation.ts` 的序列化函数**在 Anthropic SDK client 工厂或 fetch wrapper 注入 `traceparent`；每轮 generation 前用 ALS context 的当前 span 覆盖；可额外镜像 `langfuse-trace-id` / `langfuse-parent-id` 给自家 gateway；fallback 到 fetch monkey-patch
+- **Usecase**：外部 gateway（LiteLLM / CLIProxyAPI / 自建）若也接 LangFuse / OTel，两棵 trace 自动合并
+- **验证**：`ANTHROPIC_BASE_URL` 指向一个记录 header 的 mock gateway → gateway log 看到 `traceparent` 且 trace id 与 CC generation 的 trace_id 一致
 - **依赖**：T5.3, T5.5
 
 ### T5.15 · Tracer metadata 不走 `getAttributionHeader` (XS) [§11.3]
@@ -396,9 +396,9 @@ parent: server-mode-and-lang-tracing.md
 | TE.2 | interactive → deny 路径 | T3.4, T2.4, T5.13 |
 | TE.3 | policy 直接决策 | T3.3, T3.4, T5.13 |
 | TE.4 | WS 断连 + pending + grace timeout | T2.8 |
-| TE.5 | CC + gateway 一棵树 | T5.14, T5.6 |
+| TE.5 | CC + gateway 一棵树（`traceparent`） | T5.14, T5.6 |
 | TE.6 | LangFuse 宕机降级 | T5.2, T5.3 |
-| TE.7 | 进程 SIGINT 最后 flush 成功 | T2.5, T5.3 |
+| TE.7 | 进程 SIGINT/SIGTERM 最后 flush 成功 | T2.5, T5.3 |
 
 **TE.0 详细**：T3.0（`bootstrap/state.ts` ALS 改造）合并后立刻跑 `bun run build && ./dist/cli.exe` 启 REPL，至少：`/help` 显示命令、读一个文件、运行一次 Bash tool、查一次 Agent subagent、Ctrl-C 干净退出。观察 transcript / session id 行为与改造前一致。**越早验证越好，不要等到 Phase 5 结束才跑**。
 
@@ -414,7 +414,7 @@ T0.1 (基建) ──▶ T0.2 ──▶ T2.0 SPIKE ──▶ T5.3
 T1.1, T1.2, T1.3 (三条独立) ──▶ T1.4 ──▶ T1.5 ──▶ T1.6
 
 T2.1 (独立) ──▶ T2.2 ──▶ T2.3 ──▶ T2.7 ──▶ T2.4 ──▶ T2.8
-                         └────▶ T2.5 (SIGINT 基础版)
+                         └────▶ T2.5 (SIGINT/SIGTERM 基础版)
                          └────▶ T2.6 (auth)
 
 T3.0 BLOCKER ──▶ TE.0 (CLI 回归，越早越好)

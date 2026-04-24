@@ -46,7 +46,7 @@
 - `[ ]` T2.2 · `src/server/httpServer.ts` Bun.serve + 路由
 - `[ ]` T2.3 · `src/server/serverSession.ts` 单会话容器
 - `[ ]` T2.4 · `src/server/controlBridge.ts` 双向 control 翻译
-- `[ ]` T2.5 · `serverMain.ts` 装配 + SIGINT 优雅关闭
+- `[ ]` T2.5 · `serverMain.ts` 装配 + SIGINT/SIGTERM 优雅关闭
 - `[ ]` T2.6 · Bearer token 鉴权中间件
 - `[ ]` T2.7 · WS 出站单 writer 串行化
 - `[ ]` T2.8 · WS 断连期 pending + grace period
@@ -67,7 +67,7 @@
 - `[ ]` T4.2 · `bun build --analyze` 依赖审计
 - `[ ]` T4.3 · 漏点 A · `messageSelection.ts` pure-logic
 - `[ ]` T4.4 · 漏点 B · tool `.logic.ts` + `.ui.tsx` 拆分
-- `[ ]` T4.5 · `scripts/build.ts` server externals 追加
+- `[ ]` T4.5 · `scripts/build.ts` server external guardrail（禁止 Ink external 兜底）
 - `[ ]` T4.6 · Plugin Ink shim fallback（条件触发，T4.2 扫到 plugin Ink 才做）
 - `[ ]` T4-Smoke · bundle 体积 ≤85MB + 启动无 Ink escape
 
@@ -97,9 +97,9 @@
 - `[ ]` TE.2 · interactive → deny
 - `[ ]` TE.3 · policy 直接决策
 - `[ ]` TE.4 · WS 断连 + pending + grace timeout
-- `[ ]` TE.5 · CC + gateway 一棵 trace 树
+- `[ ]` TE.5 · CC + gateway 一棵 trace 树（`traceparent`）
 - `[ ]` TE.6 · LangFuse 宕机降级
-- `[ ]` TE.7 · SIGINT 最后 flush
+- `[ ]` TE.7 · SIGINT/SIGTERM 最后 flush
 
 前置：PR #1 / #6 / #7 已合并（当前状态）。**开实施分支前先过 [`plans/server-mode-and-lang-tracing.md`](./server-mode-and-lang-tracing.md) §11 的 4 条技术风险**。
 
