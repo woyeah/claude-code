@@ -1,0 +1,4 @@
+# SPIKE build artifacts / runtime logs — scripts + report only go in git
+dist-*
+*.exe
+*.log
