@@ -20,13 +20,16 @@ parent: server-mode-and-lang-tracing.md
 
 > 这阶段不改代码，只确保"阶段 5 有一个 LangFuse 能往里写"。在自托管 LangFuse 下跑通是本方案的前提。
 
-### T0.1 · 部署 self-hosted LangFuse 实例 (M)
+### T0.1 · 部署 self-hosted LangFuse 实例 (M) — ✅ 文档已交付
 
-- **Scope**：起一个 LangFuse 服务（官方 Docker Compose 或 k8s helm chart 任选），含 PostgreSQL + ClickHouse + LangFuse web/worker；暴露 HTTP endpoint；创建 project 并取得 `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`
+- **Scope**：用 Docker Compose 起一套 self-hosted LangFuse v3（web / worker / postgres / clickhouse / redis / minio 6 服务）；暴露 `127.0.0.1:3000` Web UI；创建 project 并取得 `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY`
 - **Usecase**：所有带 LangFuse 的任务（T2.0 SPIKE / T5.3 / T5-Smoke / TE.5）都要求 LangFuse 可达；没有实例等于没有后端
-- **验证**：`curl $LANGFUSE_BASE_URL/api/public/health` 返 200；用 LangFuse 官方 JS 脚本手动发一条 trace，Web UI 里看得到
+- **验证**：`curl http://localhost:3000/api/public/health` 返 200；用 [`guides/langfuse-setup.md` §5](../guides/langfuse-setup.md) 的 Bun 脚本发一条 trace，Web UI `Traces` 面板看得到
 - **依赖**：无（独立基建，越早越好）
-- **交付物**：`docs/guides/langfuse-setup.md`（部署步骤 + endpoint + 凭证取得流程 + 排错常见项）
+- **交付物**：
+  - [`deploy/langfuse/docker-compose.yml`](../../deploy/langfuse/docker-compose.yml) + [`deploy/langfuse/.env.example`](../../deploy/langfuse/.env.example) + [`deploy/langfuse/.gitignore`](../../deploy/langfuse/.gitignore)
+  - [`docs/guides/langfuse-setup.md`](../guides/langfuse-setup.md)（前置 · 起服务 · 初始化 project · 凭证落盘 · 冒烟 · 排错 · 轮换备份 · 下一步，8 节）
+- **剩余动作**：开发者本机执行 `cd deploy/langfuse && cp .env.example .env && <填随机值> && docker compose up -d` 即完成真实部署
 
 ### T0.2 · LangFuse 接入变量写入本地 `.env.local` + secrets 管理约定 (XS)
 

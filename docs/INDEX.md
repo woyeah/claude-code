@@ -21,6 +21,7 @@
 - [`guides/intent-recognition.md`](guides/intent-recognition.md) — Claude Code 的意图识别**不是单独模块**而是分层路由，这份讲每一层在哪
 - [`guides/system-prompt-structure.md`](guides/system-prompt-structure.md) — 主 system prompt 的模块化组装：`constants/prompts.ts` 分段 + `utils/systemPrompt.ts::buildEffectiveSystemPrompt` 合并
 - [`guides/disable-telemetry.md`](guides/disable-telemetry.md) — 禁用遥测的 patch 总览：PR #1 / #6 / #7 各自封哪些通道，哪些因 DCE / 特殊条件不用改
+- [`guides/langfuse-setup.md`](guides/langfuse-setup.md) — LangFuse self-host 部署（Docker Compose 6 服务栈）：起服务 → 建 project → 凭证落盘 `.env.local` → SDK 冒烟；T0.1 交付物
 
 ## plans（要做的事）
 
