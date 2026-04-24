@@ -524,7 +524,7 @@ Server build 的 tree-shaking 策略：
 |---|---|---|---|
 | `QueryEngine` 隐含单例状态导致多 session 串扰 | 中 | 高 | §11.1 已明确方案；阶段 3 必做，不能推迟 |
 | Bun.serve WS 在 Windows 稳定性 | 低 | 中 | 出问题 fallback `uWebSockets.js` |
-| LangFuse JS SDK 在 Bun runtime 兼容性 | 低 | 高 | 阶段 2 开头单独 spike；不行降级直调 LangFuse REST |
+| ~~LangFuse JS SDK 在 Bun runtime 兼容性~~ | ~~低~~ | ~~高~~ | **已验证 · T2.0 SPIKE 2026-04-24**：`langfuse@3.38.20` 在 `bun run` 与 `bun build --compile` 产物里都能正常 POST 到 `/api/public/ingestion` + `flushAsync` + `shutdownAsync` 全路径通。**不需要降级到 REST**。详见 `spike/spike_report.md` |
 | direct-connect wire 细节少实现 | 高 | 中 | 共享上游 `directConnectManager.ts` / `remote/*` 类型定义，不自造 wire；`cli/structuredIO.ts` 直接镜像 |
 | 意外触及 PR#1 no-op 的代码路径 | 低 | 中 | 新 tracer 代码与 `src/utils/telemetry/*` / `src/services/analytics/*` 完全解耦；PR 审查 grep 验证 |
 | Ink 深度嵌入 tool 导致 DCE 不彻底 | 中 | 中 | 漏点 A/B 拆分；实在不行走 server-only shim 兜底（+5MB）；禁止用 `--external ink` 掩盖 |

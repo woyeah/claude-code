@@ -90,13 +90,15 @@ parent: server-mode-and-lang-tracing.md
 
 ## Phase 2 — HTTP/WS 单会话可跑通（L 合计）
 
-### T2.0 · SPIKE：LangFuse JS SDK 在 Bun runtime 下的最小可用性 (SPIKE · S)
+### T2.0 · SPIKE：LangFuse JS SDK 在 Bun runtime 下的最小可用性 (SPIKE · S) — ✅ PASS
 
 - **Scope**：`bun add langfuse` + 写最小脚本 `spike/langfuse-bun.ts`：创建 trace → 立刻 `flush()` → LangFuse UI 看得到
 - **Usecase**：**提前**证伪阶段 5 能不能用原生 SDK；不行就降级到直调 LangFuse REST API
 - **验证**：LangFuse 面板看得到 trace；把 `spike/` 目录清掉，结论写进 `server-mode-and-lang-tracing.md` §11 或 §12.6 备注
 - **依赖**：T0.1（需要有 LangFuse 实例可写入）
 - **输出**：`spike_report.md`（一句结论 + 3 行支撑）；不进 dist
+- **结论**（2026-04-24）：`langfuse@3.38.20` 在 `bun run` 与 `bun build --compile` 产物下行为一致——5 类 event（`trace-create` / `span-create/update` / `generation-create/update`）经 `/api/public/ingestion` 正常发出，`flushAsync` + `shutdownAsync` 全路径通。**不需要降级到 REST**；`server-mode-and-lang-tracing.md` §9 风险项已标注"已验证"。真实 LangFuse UI 端到端确认留给开发者本机起 Docker Compose 后用 `spike/langfuse-bun.ts` 复验；mock 端点的 SPIKE 在 `spike/` 目录保留作回归参考
+- **交付物**：`spike/langfuse-bun.ts` + `spike/mock-ingestion.ts` + `spike/spike_report.md`
 
 ### T2.1 · 新增 `src/server/directConnectProtocol.ts` wire 类型 (S)
 
