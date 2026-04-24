@@ -31,12 +31,14 @@ parent: server-mode-and-lang-tracing.md
   - [`docs/guides/langfuse-setup.md`](../guides/langfuse-setup.md)（前置 · 起服务 · 初始化 project · 凭证落盘 · 冒烟 · 排错 · 轮换备份 · 下一步，8 节）
 - **剩余动作**：开发者本机执行 `cd deploy/langfuse && cp .env.example .env && <填随机值> && docker compose up -d` 即完成真实部署
 
-### T0.2 · LangFuse 接入变量写入本地 `.env.local` + secrets 管理约定 (XS)
+### T0.2 · LangFuse 接入变量写入本地 `.env.local` + secrets 管理约定 (XS) — ✅ 完成
 
 - **Scope**：把 `LANGFUSE_*` 放到 `.env.local`（已 gitignore）；在 `docs/guides/langfuse-setup.md` 写明"不要 commit 凭证"；`scripts/build.ts` / server 读取顺序 env > .env.local > 默认值
 - **Usecase**：本地开发默认就能连上自托管 LangFuse；不污染 git
 - **验证**：`.env.local` 被 `.gitignore` 匹配；`bun -e 'console.log(process.env.LANGFUSE_PUBLIC_KEY)'` 在项目根下可读
 - **依赖**：T0.1
+- **交付物**：[`docs/guides/deployment.md`](../guides/deployment.md#本地凭证约定) 新增 "本地凭证约定" 一节，回链 [`langfuse-setup.md §4`](../guides/langfuse-setup.md#4--把凭证写进仓库)。`.env.local` 的 `process.env` > `.env.local` > 默认值 读取顺序是**约定**，loader 实现由 T1.3 落地
+- **剩余动作**：无
 
 ---
 

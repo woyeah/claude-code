@@ -26,7 +26,7 @@
 **前置阻塞**（Day 1 就开工）：
 
 - `[x]` T0.1 · **基建** 部署 self-hosted LangFuse 实例 + `docs/guides/langfuse-setup.md`（Docker Compose 栈交付，见 [`../guides/langfuse-setup.md`](../guides/langfuse-setup.md)；实际 `docker compose up` 由开发者本机执行）
-- `[ ]` T0.2 · LangFuse 凭证写入 `.env.local` + secrets 约定（T0.1 文档第 4 节已覆盖；留个小任务把 `docs/guides/deployment.md` 加一行指回来即可）
+- `[x]` T0.2 · LangFuse 凭证写入 `.env.local` + secrets 约定（已在 [`docs/guides/deployment.md`](../guides/deployment.md#本地凭证约定) 加一节指回 [`langfuse-setup.md §4`](../guides/langfuse-setup.md#4--把凭证写进仓库)）
 - `[ ]` T2.0 · **SPIKE** LangFuse JS SDK 在 Bun runtime 冒烟
 - `[ ]` T3.0 · **BLOCKER** `bootstrap/state.ts` AsyncLocalStorage 改造
 - `[ ]` TE.0 · T3.0 改造后立即跑 CLI REPL 回归冒烟
