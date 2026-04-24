@@ -1,0 +1,7 @@
+{
+  "name": "@ant/computer-use-mcp",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "index.mjs",
+  "types": "index.d.ts"
+}

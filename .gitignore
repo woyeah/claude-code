@@ -1,0 +1,8 @@
+node_modules/
+dist/
+bun.lock
+bun.lockb
+*.log
+.env
+.env.local
+.obsidian/

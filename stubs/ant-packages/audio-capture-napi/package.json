@@ -1,0 +1,7 @@
+{
+  "name": "audio-capture-napi",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "index.mjs",
+  "types": "index.d.ts"
+}
